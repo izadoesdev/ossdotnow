@@ -1,5 +1,6 @@
 import { adminProcedure, createTRPCRouter, publicProcedure } from '../trpc';
-import { user } from '@workspace/db/schema';
+import { user as userSchema, userRoleEnum } from '@workspace/db/schema';
+import { TRPCError } from '@trpc/server';
 import { eq } from 'drizzle-orm';
 import z from 'zod/v4';
 
