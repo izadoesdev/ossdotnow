@@ -175,15 +175,30 @@ export type GitManagerConfig = {
   token: string;
 };
 
-export type ContributionData = {
-  count: number;
-};
+export interface ContributionDay {
+  date: string;
+  contributionCount: number;
+  contributionLevel:
+    | 'NONE'
+    | 'FIRST_QUARTILE'
+    | 'SECOND_QUARTILE'
+    | 'THIRD_QUARTILE'
+    | 'FOURTH_QUARTILE';
+  color: string;
+}
+
+export interface ContributionData {
+  totalContributions: number;
+  days: ContributionDay[];
+}
 
 export interface GitManager {
   getRepo(identifier: string): Promise<RepoData>;
   getContributors(identifier: string): Promise<ContributorData[]>;
   getIssues(identifier: string): Promise<IssueData[]>;
   getPullRequests(identifier: string): Promise<PullRequestData[]>;
+  getIssuesCount(identifier: string): Promise<number>;
+  getPullRequestsCount(identifier: string): Promise<number>;
   getReadme(identifier: string): Promise<ReadmeData>;
   getContributing(identifier: string): Promise<ContributingData>;
   getCodeOfConduct(identifier: string): Promise<CodeOfConductData>;
@@ -197,8 +212,8 @@ export interface GitManager {
   getRepoData(identifier: string): Promise<{
     repo: RepoData;
     contributors: ContributorData[];
-    issues: IssueData[];
-    pullRequests: PullRequestData[];
+    issuesCount: number;
+    pullRequestsCount: number;
   }>;
   verifyOwnership(
     identifier: string,
@@ -223,6 +238,6 @@ export interface GitManager {
     org: string,
     username: string,
   ): Promise<RestEndpointMethodTypes['orgs']['getMembershipForUser']['response']['data']>;
-  getContributions(username: string): Promise<ContributionData[]>;
+  getContributions(username: string): Promise<ContributionData>;
   getUserDetails(username: string): Promise<UserData>;
 }

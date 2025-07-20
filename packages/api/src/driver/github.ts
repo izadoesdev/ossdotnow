@@ -10,6 +10,7 @@ import {
   FileData,
   GitManagerConfig,
   ContributionData,
+  ContributionDay,
   UserData,
   UserPullRequestData,
 } from './types';
@@ -148,6 +149,52 @@ export class GithubManager implements GitManager {
     );
   }
 
+  async getIssuesCount(identifier: string): Promise<number> {
+    const { owner, repo } = this.parseRepoIdentifier(identifier);
+
+    return getCached(
+      createCacheKey('github', 'open_issues_count', identifier),
+      async () => {
+        try {
+          const { data } = await this.octokit.rest.search.issuesAndPullRequests({
+            q: `repo:${owner}/${repo} is:issue is:open`,
+          });
+          return data.total_count;
+        } catch (error) {
+          console.error('Error fetching GitHub issues count:', error);
+          throw new TRPCError({
+            code: 'INTERNAL_SERVER_ERROR',
+            message: 'Failed to retrieve issues count for this GitHub repository',
+          });
+        }
+      },
+      { ttl: 10 * 60 },
+    );
+  }
+
+  async getPullRequestsCount(identifier: string): Promise<number> {
+    const { owner, repo } = this.parseRepoIdentifier(identifier);
+
+    return getCached(
+      createCacheKey('github', 'open_pull_requests_count', identifier),
+      async () => {
+        try {
+          const { data } = await this.octokit.rest.search.issuesAndPullRequests({
+            q: `repo:${owner}/${repo} is:pr is:open`,
+          });
+          return data.total_count;
+        } catch (error) {
+          console.error('Error fetching GitHub pull requests count:', error);
+          throw new TRPCError({
+            code: 'INTERNAL_SERVER_ERROR',
+            message: 'Failed to retrieve pull requests count for this GitHub repository',
+          });
+        }
+      },
+      { ttl: 10 * 60 },
+    );
+  }
+
   async getPullRequests(identifier: string): Promise<PullRequestData[]> {
     const { owner, repo } = this.parseRepoIdentifier(identifier);
 
@@ -183,7 +230,6 @@ export class GithubManager implements GitManager {
             owner,
             repo,
           });
-          
           return {
             content: data.content,
             encoding: data.encoding as 'base64' | 'utf8',
@@ -218,7 +264,6 @@ export class GithubManager implements GitManager {
       async () => {
         try {
           let data = null;
-          
           // Try to find the file
           for (const filename of possibleFilenames) {
             try {
@@ -227,7 +272,6 @@ export class GithubManager implements GitManager {
                 repo,
                 path: filename,
               });
-              
               // Check if it's a file (not a directory)
               if (!Array.isArray(response.data) && response.data.type === 'file') {
                 data = response.data;
@@ -237,11 +281,11 @@ export class GithubManager implements GitManager {
               // Continue to next filename if this one doesn't exist
             }
           }
-          
+
           if (!data) {
             throw new Error(`No ${cacheType} file found`);
           }
-          
+
           return {
             content: data.content,
             encoding: data.encoding as 'base64' | 'utf8',
@@ -316,18 +360,18 @@ export class GithubManager implements GitManager {
   }
 
   async getRepoData(identifier: string) {
-    const [repoData, contributors, issues, pullRequests] = await Promise.all([
+    const [repoData, contributors, issuesCount, pullRequestsCount] = await Promise.all([
       this.getRepo(identifier),
       this.getContributors(identifier),
-      this.getIssues(identifier),
-      this.getPullRequests(identifier),
+      this.getIssuesCount(identifier),
+      this.getPullRequestsCount(identifier),
     ]);
 
     return {
       repo: repoData,
       contributors,
-      issues,
-      pullRequests,
+      issuesCount,
+      pullRequestsCount,
     };
   }
 
@@ -533,8 +577,70 @@ export class GithubManager implements GitManager {
     );
   }
 
-  getContributions(username: string): Promise<ContributionData[]> {
-    throw new Error('Method not implemented.');
+  async getContributions(username: string): Promise<ContributionData> {
+    return getCached(
+      createCacheKey('github', 'contributions', username),
+      async () => {
+        const query = `
+          query GetUserContributions($username: String!) {
+            user(login: $username) {
+              contributionsCollection {
+                contributionCalendar {
+                  totalContributions
+                  weeks {
+                    contributionDays {
+                      date
+                      contributionCount
+                      contributionLevel
+                      color
+                    }
+                  }
+                }
+              }
+            }
+          }
+        `;
+
+        try {
+          const response: any = await this.octokit.graphql(query, { username });
+
+          if (!response.user) {
+            throw new TRPCError({
+              code: 'NOT_FOUND',
+              message: `GitHub user '${username}' not found`,
+            });
+          }
+
+          const calendar = response.user.contributionsCollection.contributionCalendar;
+          const days: ContributionDay[] = [];
+
+          calendar.weeks.forEach((week: any) => {
+            week.contributionDays.forEach((day: any) => {
+              days.push({
+                date: day.date,
+                contributionCount: day.contributionCount,
+                contributionLevel: day.contributionLevel,
+                color: day.color,
+              });
+            });
+          });
+
+          return {
+            totalContributions: calendar.totalContributions,
+            days,
+          };
+        } catch (error) {
+          if (error instanceof TRPCError) {
+            throw error;
+          }
+          throw new TRPCError({
+            code: 'INTERNAL_SERVER_ERROR',
+            message: `Failed to fetch contributions: ${error instanceof Error ? error.message : String(error)}`,
+          });
+        }
+      },
+      { ttl: 60 * 60 },
+    );
   }
 
   async getUserPullRequests(
